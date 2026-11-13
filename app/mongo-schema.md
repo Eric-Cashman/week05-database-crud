@@ -17,7 +17,6 @@ project with all of its tasks is a single `findOne`.
       "_id": "ObjectId('665f1c2e9b1e8a0012a4c002')",
       "title": "Draft new homepage copy",
       "status": "todo",
-      "priority": 2,
       "dueDate": "2026-11-20T00:00:00.000Z",
       "createdAt": "2026-11-12T20:00:00.000Z",
       "updatedAt": "2026-11-12T20:00:00.000Z"
@@ -25,6 +24,9 @@ project with all of its tasks is a single `findOne`.
   ]
 }
 ```
+
+`priority` (high, medium, low) is not stored. The API computes it from
+`dueDate` on every read (see `priority.ts`), so it can never go stale.
 
 ## Indexes
 

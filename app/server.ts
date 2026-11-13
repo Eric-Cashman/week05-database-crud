@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, RequestHandler, Response, Router } from 'express';
 import { closeAll, TaskInput } from './db';
+import { priorityFor } from './priority';
 import * as sqlRepo from './sqlRepo';
 import * as mongoRepo from './mongoRepo';
 
@@ -16,13 +17,23 @@ interface Repo {
 
 const STATUSES = ['todo', 'in_progress', 'done'];
 
+// Priority is not stored in either database. It is computed from the due date
+// here, once, so SQL and Mongo responses always agree.
+function withTaskPriority(task: any) {
+  if (!task) return task;
+  return { ...task, priority: priorityFor(task.due_date ?? task.dueDate) };
+}
+
+function withProjectPriorities(project: any) {
+  if (!project || !Array.isArray(project.tasks)) return project;
+  return { ...project, tasks: project.tasks.map(withTaskPriority) };
+}
+
 function taskError(t: any): string | null {
   if (!t || typeof t.title !== 'string' || !t.title.trim() || t.title.length > 200)
     return 'task title is required (max 200 chars)';
   if (t.status !== undefined && !STATUSES.includes(t.status))
     return `task status must be one of: ${STATUSES.join(', ')}`;
-  if (t.priority !== undefined && ![1, 2, 3].includes(t.priority))
-    return 'task priority must be 1, 2, or 3';
   if (t.dueDate != null && Number.isNaN(Date.parse(t.dueDate)))
     return 'task dueDate must be a valid date';
   return null;
@@ -45,17 +56,19 @@ function buildRouter(repo: Repo): Router {
       const err = taskError(t);
       if (err) return res.status(400).json({ error: err });
     }
-    res.status(201).json(await repo.createProject(name, String(description), tasks));
+    const created = await repo.createProject(name, String(description), tasks);
+    res.status(201).json(withProjectPriorities(created));
   }));
 
   r.get('/projects', wrap(async (_req, res) => {
-    res.json(await repo.listProjects());
+    const list = await repo.listProjects();
+    res.json(list.map(withProjectPriorities));
   }));
 
   r.get('/projects/:id', wrap(async (req, res) => {
     const project = await repo.getProject(req.params.id);
     if (!project) return res.status(404).json({ error: 'project not found' });
-    res.json(project);
+    res.json(withProjectPriorities(project));
   }));
 
   r.patch('/projects/:id', wrap(async (req, res) => {
@@ -66,7 +79,7 @@ function buildRouter(repo: Repo): Router {
       return res.status(400).json({ error: 'name must be a non-empty string (max 200 chars)' });
     const updated = await repo.updateProject(req.params.id, { name, description });
     if (!updated) return res.status(404).json({ error: 'project not found' });
-    res.json(updated);
+    res.json(withProjectPriorities(updated));
   }));
 
   r.delete('/projects/:id', wrap(async (req, res) => {
@@ -80,7 +93,7 @@ function buildRouter(repo: Repo): Router {
     if (err) return res.status(400).json({ error: err });
     const task = await repo.addTask(req.params.id, req.body);
     if (!task) return res.status(404).json({ error: 'project not found' });
-    res.status(201).json(task);
+    res.status(201).json(withTaskPriority(task));
   }));
 
   r.patch('/projects/:id/tasks/:taskId', wrap(async (req, res) => {

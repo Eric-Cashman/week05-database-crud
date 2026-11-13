@@ -1,10 +1,14 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
 import { Db, MongoClient } from 'mongodb';
+
+// Return SQL DATE columns as plain 'YYYY-MM-DD' strings. By default pg turns them
+// into JS Dates at local midnight, which shifts the day when serialized to JSON
+// and would make derived priority disagree with the Mongo engine.
+types.setTypeParser(1082, (value: string) => value);
 
 export type TaskInput = {
   title: string;
   status?: string;
-  priority?: number;
   dueDate?: string | null;
 };
 

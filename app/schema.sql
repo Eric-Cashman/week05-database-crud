@@ -6,14 +6,14 @@ CREATE TABLE projects (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Priority is intentionally not a column: it is derived from due_date at read time
+-- (see priority.ts), so storing it would create a value that goes stale.
 CREATE TABLE tasks (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   title       VARCHAR(200) NOT NULL,
   status      VARCHAR(20) NOT NULL DEFAULT 'todo'
               CHECK (status IN ('todo', 'in_progress', 'done')),
-  priority    SMALLINT NOT NULL DEFAULT 2
-              CHECK (priority BETWEEN 1 AND 3),
   due_date    DATE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()

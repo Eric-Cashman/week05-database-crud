@@ -26,9 +26,9 @@ export async function createProject(
     const projectId: string = rows[0].id;
     for (const t of tasks) {
       await client.query(
-        `INSERT INTO tasks (project_id, title, status, priority, due_date)
-         VALUES ($1, $2, COALESCE($3, 'todo'), COALESCE($4, 2), $5)`,
-        [projectId, t.title, t.status ?? null, t.priority ?? null, t.dueDate ?? null]
+        `INSERT INTO tasks (project_id, title, status, due_date)
+         VALUES ($1, $2, COALESCE($3, 'todo'), $4)`,
+        [projectId, t.title, t.status ?? null, t.dueDate ?? null]
       );
     }
     await client.query('COMMIT');
@@ -81,10 +81,10 @@ export async function deleteProject(id: string): Promise<boolean> {
 export async function addTask(projectId: string, t: TaskInput) {
   try {
     const { rows } = await pg.query(
-      `INSERT INTO tasks (project_id, title, status, priority, due_date)
-       VALUES ($1, $2, COALESCE($3, 'todo'), COALESCE($4, 2), $5)
+      `INSERT INTO tasks (project_id, title, status, due_date)
+       VALUES ($1, $2, COALESCE($3, 'todo'), $4)
        RETURNING *`,
-      [projectId, t.title, t.status ?? null, t.priority ?? null, t.dueDate ?? null]
+      [projectId, t.title, t.status ?? null, t.dueDate ?? null]
     );
     return rows[0];
   } catch (err: any) {

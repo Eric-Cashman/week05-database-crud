@@ -15,7 +15,6 @@ function buildTask(t: TaskInput): Document {
     _id: new ObjectId(),
     title: t.title,
     status: t.status ?? 'todo',
-    priority: t.priority ?? 2,
     dueDate: t.dueDate ? new Date(t.dueDate) : null,
     createdAt: now,
     updatedAt: now,

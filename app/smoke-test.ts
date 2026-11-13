@@ -23,6 +23,15 @@ async function call(method: string, path: string, body?: unknown) {
 
 const idOf = (p: any) => p.id ?? p._id;
 
+// Local calendar date, N days from today, as YYYY-MM-DD.
+function dayFromToday(offset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 async function runEngine(engine: 'sql' | 'mongo') {
   console.log(`\n=== ${engine.toUpperCase()} ===`);
 
@@ -67,6 +76,33 @@ async function runEngine(engine: 'sql' | 'mongo') {
 
   const gone = await call('GET', `/${engine}/projects/${id}`);
   check('deleted project returns 404', gone.status === 404);
+
+  await priorityTests(engine);
+}
+
+async function priorityTests(engine: 'sql' | 'mongo') {
+  const made = await call('POST', `/${engine}/projects`, {
+    name: 'Priority test project',
+    tasks: [
+      { title: 'overdue', dueDate: dayFromToday(-2) },
+      { title: 'tomorrow', dueDate: dayFromToday(1) },
+      { title: 'in 5 days', dueDate: dayFromToday(5) },
+      { title: 'in 30 days', dueDate: dayFromToday(30) },
+      { title: 'no due date' },
+    ],
+  });
+  check('priority test project created', made.status === 201, made);
+  const pid = idOf(made.body);
+  const read = await call('GET', `/${engine}/projects/${pid}`);
+  const byTitle = (title: string) => read.body.tasks.find((t: any) => t.title === title)?.priority;
+
+  check('overdue task is high', byTitle('overdue') === 'high', byTitle('overdue'));
+  check('task due tomorrow is high', byTitle('tomorrow') === 'high', byTitle('tomorrow'));
+  check('task due in 5 days is medium', byTitle('in 5 days') === 'medium', byTitle('in 5 days'));
+  check('task due in 30 days is low', byTitle('in 30 days') === 'low', byTitle('in 30 days'));
+  check('task with no due date is low', byTitle('no due date') === 'low', byTitle('no due date'));
+
+  await call('DELETE', `/${engine}/projects/${pid}`);
 }
 
 async function sqlConstraintTests() {
