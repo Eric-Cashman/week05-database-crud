@@ -1,14 +1,17 @@
 import express, { NextFunction, Request, RequestHandler, Response, Router } from 'express';
-import { closeAll, TaskInput } from './db';
+import { closeAll, RETENTION_DAYS, TaskInput } from './db';
+import { priorityFor } from './priority';
 import * as sqlRepo from './sqlRepo';
 import * as mongoRepo from './mongoRepo';
 
 interface Repo {
-  createProject(name: string, description: string, tasks?: TaskInput[]): Promise<any>;
+  createProject(name: string, instructions: string, tasks?: TaskInput[]): Promise<any>;
   listProjects(): Promise<any[]>;
   getProject(id: string): Promise<any | null>;
-  updateProject(id: string, f: { name?: string; description?: string }): Promise<any | null>;
+  updateProject(id: string, f: { name?: string; instructions?: string }): Promise<any | null>;
   deleteProject(id: string): Promise<boolean>;
+  restoreProject(id: string): Promise<boolean>;
+  purgeDeleted(days: number): Promise<number>;
   addTask(projectId: string, t: TaskInput): Promise<any | null>;
   updateTaskStatus(projectId: string, taskId: string, status: string): Promise<boolean>;
   removeTask(projectId: string, taskId: string): Promise<boolean>;
@@ -16,15 +19,27 @@ interface Repo {
 
 const STATUSES = ['todo', 'in_progress', 'done'];
 
+// Priority is not stored in either database. It is computed from the due date
+// here, once, so SQL and Mongo responses always agree.
+function withTaskPriority(task: any) {
+  if (!task) return task;
+  return { ...task, priority: priorityFor(task.due_date ?? task.dueDate) };
+}
+
+function withProjectPriorities(project: any) {
+  if (!project || !Array.isArray(project.tasks)) return project;
+  return { ...project, tasks: project.tasks.map(withTaskPriority) };
+}
+
 function taskError(t: any): string | null {
   if (!t || typeof t.title !== 'string' || !t.title.trim() || t.title.length > 200)
     return 'task title is required (max 200 chars)';
   if (t.status !== undefined && !STATUSES.includes(t.status))
     return `task status must be one of: ${STATUSES.join(', ')}`;
-  if (t.priority !== undefined && ![1, 2, 3].includes(t.priority))
-    return 'task priority must be 1, 2, or 3';
   if (t.dueDate != null && Number.isNaN(Date.parse(t.dueDate)))
     return 'task dueDate must be a valid date';
+  if (t.code != null && (typeof t.code !== 'string' || t.code.length > 5000))
+    return 'task code must be a string (max 5000 chars)';
   return null;
 }
 
@@ -37,7 +52,7 @@ function buildRouter(repo: Repo): Router {
   const r = Router();
 
   r.post('/projects', wrap(async (req, res) => {
-    const { name, description = '', tasks = [] } = req.body ?? {};
+    const { name, instructions = '', tasks = [] } = req.body ?? {};
     if (typeof name !== 'string' || !name.trim() || name.length > 200)
       return res.status(400).json({ error: 'name is required (max 200 chars)' });
     if (!Array.isArray(tasks)) return res.status(400).json({ error: 'tasks must be an array' });
@@ -45,34 +60,52 @@ function buildRouter(repo: Repo): Router {
       const err = taskError(t);
       if (err) return res.status(400).json({ error: err });
     }
-    res.status(201).json(await repo.createProject(name, String(description), tasks));
+    const created = await repo.createProject(name, String(instructions), tasks);
+    res.status(201).json(withProjectPriorities(created));
   }));
 
   r.get('/projects', wrap(async (_req, res) => {
-    res.json(await repo.listProjects());
+    const list = await repo.listProjects();
+    res.json(list.map(withProjectPriorities));
   }));
 
   r.get('/projects/:id', wrap(async (req, res) => {
     const project = await repo.getProject(req.params.id);
     if (!project) return res.status(404).json({ error: 'project not found' });
-    res.json(project);
+    res.json(withProjectPriorities(project));
   }));
 
   r.patch('/projects/:id', wrap(async (req, res) => {
-    const { name, description } = req.body ?? {};
-    if (name === undefined && description === undefined)
-      return res.status(400).json({ error: 'provide name and/or description' });
+    const { name, instructions } = req.body ?? {};
+    if (name === undefined && instructions === undefined)
+      return res.status(400).json({ error: 'provide name and/or instructions' });
     if (name !== undefined && (typeof name !== 'string' || !name.trim() || name.length > 200))
       return res.status(400).json({ error: 'name must be a non-empty string (max 200 chars)' });
-    const updated = await repo.updateProject(req.params.id, { name, description });
+    const updated = await repo.updateProject(req.params.id, { name, instructions });
     if (!updated) return res.status(404).json({ error: 'project not found' });
-    res.json(updated);
+    res.json(withProjectPriorities(updated));
   }));
 
+  // Soft delete.
   r.delete('/projects/:id', wrap(async (req, res) => {
     const ok = await repo.deleteProject(req.params.id);
     if (!ok) return res.status(404).json({ error: 'project not found' });
     res.status(204).end();
+  }));
+
+  r.post('/projects/:id/restore', wrap(async (req, res) => {
+    const ok = await repo.restoreProject(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'no deleted project with that id' });
+    res.json({ restored: true });
+  }));
+
+  // Hard-deletes projects soft-deleted more than olderThanDays ago (default: retention period).
+  r.post('/purge', wrap(async (req, res) => {
+    const raw = req.query.olderThanDays;
+    const days = raw === undefined ? RETENTION_DAYS : Number(raw);
+    if (!Number.isInteger(days) || days < 0)
+      return res.status(400).json({ error: 'olderThanDays must be a non-negative integer' });
+    res.json({ purged: await repo.purgeDeleted(days) });
   }));
 
   r.post('/projects/:id/tasks', wrap(async (req, res) => {
@@ -80,7 +113,7 @@ function buildRouter(repo: Repo): Router {
     if (err) return res.status(400).json({ error: err });
     const task = await repo.addTask(req.params.id, req.body);
     if (!task) return res.status(404).json({ error: 'project not found' });
-    res.status(201).json(task);
+    res.status(201).json(withTaskPriority(task));
   }));
 
   r.patch('/projects/:id/tasks/:taskId', wrap(async (req, res) => {

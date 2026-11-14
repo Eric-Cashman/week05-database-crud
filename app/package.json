@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "smoke": "tsx smoke-test.ts",
+    "qa": "tsx qa-run.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
