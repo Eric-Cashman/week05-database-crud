@@ -10,7 +10,11 @@ export type TaskInput = {
   title: string;
   status?: string;
   dueDate?: string | null;
+  code?: string | null;
 };
+
+// How long a soft-deleted project is kept before it is purged.
+export const RETENTION_DAYS = Number(process.env.RETENTION_DAYS ?? 30);
 
 export const pg = new Pool({
   connectionString:
@@ -27,7 +31,14 @@ export async function getMongoDb(): Promise<Db> {
   if (!mongoDb) {
     await mongoClient.connect();
     mongoDb = mongoClient.db('tasks');
-    await mongoDb.collection('projects').createIndex({ 'tasks.dueDate': 1 });
+    const projects = mongoDb.collection('projects');
+    await projects.createIndex({ 'tasks.dueDate': 1 });
+    // TTL index: MongoDB removes a project automatically once deletedAt is older
+    // than the retention period. Projects where deletedAt is null are never expired.
+    await projects.createIndex(
+      { deletedAt: 1 },
+      { expireAfterSeconds: RETENTION_DAYS * 86400 }
+    );
   }
   return mongoDb;
 }
