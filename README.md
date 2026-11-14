@@ -1,4 +1,4 @@
-# Week 05: Polyglot Persistence (Projects and Tasks)
+# Week 07: Polyglot Persistence (Projects and Tasks)
 
 By: Eric Cashman
 - AD372
